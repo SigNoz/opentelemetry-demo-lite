@@ -105,6 +105,8 @@ else
     echo "Demo completed! $COUNT traces generated."
     echo "========================================"
 
-    sleep 5
-    echo "Shutting down..."
+    sleep 120
+    echo "Press Ctrl+C or 'docker-compose down' to stop."
+    # Keep container running indefinitely
+    tail -f /dev/null
 fi
