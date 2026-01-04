@@ -2,12 +2,12 @@
 
 set -e
 
-COUNT=${COUNT:-10}
+RPS=${RPS:-5}
 
 echo "========================================"
 echo "OTel Demo Mock - Docker Container"
 echo "========================================"
-echo "Count: $COUNT"
+echo "RPS: $RPS"
 echo ""
 
 echo "Starting JavaScript services..."
@@ -26,6 +26,7 @@ echo "Starting Python services..."
 cd /app/python
 
 OTEL_SERVICE_NAME=recommendation \
+OTEL_RESOURCE_ATTRIBUTES="host.name=recommendation-host,os.type=linux" \
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317 \
 OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://otel-collector:4318/v1/logs \
 OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf \
@@ -35,10 +36,11 @@ opentelemetry-instrument \
     --traces_exporter otlp \
     --metrics_exporter otlp \
     --logs_exporter otlp \
-    uvicorn recommendation:app --host 0.0.0.0 --port 8086 &
+    uvicorn recommendation:app --host 0.0.0.0 --port 8086 --log-level warning &
 sleep 0.3
 
 OTEL_SERVICE_NAME=quote-python \
+OTEL_RESOURCE_ATTRIBUTES="host.name=quote-host,os.type=linux" \
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317 \
 OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://otel-collector:4318/v1/logs \
 OTEL_EXPORTER_OTLP_LOGS_PROTOCOL=http/protobuf \
@@ -48,12 +50,12 @@ opentelemetry-instrument \
     --traces_exporter otlp \
     --metrics_exporter otlp \
     --logs_exporter otlp \
-    uvicorn quote:app --host 0.0.0.0 --port 8094 &
+    uvicorn quote:app --host 0.0.0.0 --port 8094 --log-level warning &
 sleep 0.3
 
 echo "Starting Browser Simulator..."
 cd /app/javascript
-OTEL_SERVICE_NAME=browser-frontend BROWSER_COUNT=${COUNT} node browser-simulator.js &
+OTEL_SERVICE_NAME=browser-frontend RPS=${RPS} node browser-simulator.js &
 sleep 0.5
 
 echo ""
@@ -75,9 +77,9 @@ echo "            → Email (JS)"
 echo "            → Kafka → Accounting + Fraud-Detection (Go)"
 echo ""
 
-/app/bin/go-services --service all --count 0 &
+/app/bin/go-services --service all &
 
-if [ "$COUNT" = "0" ]; then
+if [ "$RPS" = "0" ]; then
     echo ""
     echo "========================================="
     echo "Services running in LOAD TEST MODE"
@@ -97,15 +99,10 @@ if [ "$COUNT" = "0" ]; then
     # Keep container running indefinitely
     tail -f /dev/null
 else
-    # Wait for browser simulation to complete
-    sleep $((COUNT * 2 + 10))
-    
     echo ""
-    echo "========================================"
-    echo "Demo completed! $COUNT traces generated."
-    echo "========================================"
-
-    sleep 120
+    echo "========================================="
+    echo "Services running at $RPS RPS"
+    echo "========================================="
     echo "Press Ctrl+C or 'docker-compose down' to stop."
     # Keep container running indefinitely
     tail -f /dev/null

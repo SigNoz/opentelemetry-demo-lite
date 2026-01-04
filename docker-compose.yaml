@@ -1,6 +1,7 @@
 services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.91.0
+    hostname: otel-collector
     container_name: otel-collector
     command: [ "--config=/etc/otel-collector-config.yaml" ]
     volumes:
@@ -36,7 +37,7 @@ services:
       dockerfile: Dockerfile
     container_name: otel-mock
     environment:
-      - COUNT=${COUNT:-5}
+      - RPS=${RPS:-5}
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
       - OTEL_EXPORTER_OTLP_ENDPOINT_HTTP=http://otel-collector:4318
       - OTEL_EXPORTER_OTLP_INSECURE=true

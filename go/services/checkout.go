@@ -48,34 +48,6 @@ func initCheckoutMetrics() {
 	}
 }
 
-func RunCheckoutService(count int, tp trace.TracerProvider, lp otellog.LoggerProvider) {
-	checkoutLogger = otelslog.NewLogger("checkout", otelslog.WithLoggerProvider(lp))
-	checkoutTracer = tp.Tracer("checkout")
-	initCheckoutMetrics()
-
-	// Create HTTP client with tracing
-	httpClient := &http.Client{
-		Transport: otelhttp.NewTransport(
-			http.DefaultTransport,
-			otelhttp.WithTracerProvider(tp),
-		),
-	}
-
-	checkoutLogger.Info("Checkout Service starting", "count", count)
-
-	// Wait for other services to start
-	time.Sleep(2 * time.Second)
-
-	ctx := context.Background()
-	for i := 0; i < count; i++ {
-		placeOrder(ctx, httpClient)
-		time.Sleep(time.Duration(rand.Intn(300)+100) * time.Millisecond)
-	}
-
-	checkoutLogger.Info("Checkout Service completed all orders", "total", count)
-	time.Sleep(2 * time.Second) // Allow telemetry to flush
-}
-
 // InitCheckoutServer creates an HTTP server for checkout (receives requests from frontend)
 func InitCheckoutServer(port string, tp trace.TracerProvider, lp otellog.LoggerProvider) *http.Server {
 	checkoutLogger = otelslog.NewLogger("checkout", otelslog.WithLoggerProvider(lp))

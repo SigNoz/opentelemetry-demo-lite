@@ -8,5 +8,8 @@ opentelemetry-exporter-otlp==1.28.1
 opentelemetry-instrumentation-fastapi==0.49b1
 opentelemetry-instrumentation-logging==0.49b1
 
-# System metrics (CPU, memory, network) - correlated with traces
+# System metrics (makes hosts appear in SigNoz)
 opentelemetry-instrumentation-system-metrics==0.49b1
+
+# For custom memory metrics
+psutil==6.1.1

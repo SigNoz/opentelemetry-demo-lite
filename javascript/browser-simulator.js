@@ -265,17 +265,28 @@ const server = http.createServer(async (req, res) => {
     res.end('Not found');
 });
 
-const count = parseInt(process.env.BROWSER_COUNT || process.env.COUNT || '5');
+const rps = parseInt(process.env.RPS || '5');
 
 server.listen(PORT, () => {
     console.log(`Browser Simulator listening on port ${PORT}`);
 });
 
-if (count > 0) {
-    setTimeout(() => runSimulation(count), 3000);
-    console.log(`Will simulate ${count} page views automatically`);
+if (rps > 0) {
+    const intervalMs = 1000 / rps;
+    console.log(`Running continuously at ${rps} RPS (${intervalMs}ms interval)`);
+
+    // Wait for services to start
+    setTimeout(() => {
+        setInterval(async () => {
+            try {
+                await runSingleIteration();
+            } catch (err) {
+                console.error('Iteration failed:', err.message);
+            }
+        }, intervalMs);
+    }, 5000); // 5s startup delay
 } else {
-    console.log('COUNT=0: HTTP server only');
+    console.log('RPS=0: HTTP server only (trigger via /trigger endpoint)');
 }
 
 process.on('SIGINT', async () => {

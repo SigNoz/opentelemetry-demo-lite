@@ -6,8 +6,10 @@ import os
 import random
 from typing import List, Optional
 
+import psutil
 from fastapi import FastAPI, Request
 from opentelemetry import trace, metrics
+from opentelemetry.metrics import Observation
 from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s [%(name)s] - %(message)s')
@@ -75,10 +77,68 @@ def get_product_list(exclude_ids: List[str]) -> List[dict]:
         return recommendations
 
 
+def get_load_averages():
+    """Get system load averages (1m, 5m, 15m)"""
+    return os.getloadavg()
+
+
+def get_memory_stats():
+    """Get memory stats with state attributes matching hostmetrics receiver format"""
+    mem = psutil.virtual_memory()
+    return [
+        Observation(mem.used, {"state": "used"}),
+        Observation(mem.free, {"state": "free"}),
+        Observation(getattr(mem, 'cached', 0), {"state": "cached"}),
+        Observation(getattr(mem, 'buffers', 0), {"state": "buffered"}),
+    ]
+
+
 @app.on_event("startup")
 async def startup_event():
-    SystemMetricsInstrumentor().instrument()
-    logger.info("System metrics instrumentation started")
+    # Start system metrics BUT exclude memory (we emit our own with correct states)
+    # SystemMetricsInstrumentor emits memory with states that may conflict
+    SystemMetricsInstrumentor(config={
+        "system.cpu.time": ["idle", "user", "system", "irq"],
+        "system.cpu.utilization": ["idle", "user", "system", "irq"],
+        # Exclude system.memory.usage - we emit our own below
+        "process.runtime.memory": ["rss", "vms"],
+        "process.runtime.cpu.time": ["user", "system"],
+    }).instrument()
+
+    # Create load average metrics - REQUIRED for ACTIVE status in SigNoz
+    host_meter = metrics.get_meter("host-metrics")
+
+    host_meter.create_observable_gauge(
+        "system.cpu.load_average.1m",
+        callbacks=[lambda options: [Observation(get_load_averages()[0])]],
+        description="1-minute CPU load average",
+        unit="1"
+    )
+
+    host_meter.create_observable_gauge(
+        "system.cpu.load_average.5m",
+        callbacks=[lambda options: [Observation(get_load_averages()[1])]],
+        description="5-minute CPU load average",
+        unit="1"
+    )
+
+    host_meter.create_observable_gauge(
+        "system.cpu.load_average.15m",
+        callbacks=[lambda options: [Observation(get_load_averages()[2])]],
+        description="15-minute CPU load average",
+        unit="1"
+    )
+
+    # system.memory.usage - with states matching hostmetrics receiver format
+    # Using Gauge because SigNoz graph query auto-detection defaults to Unspecified temporality
+    host_meter.create_observable_gauge(
+        "system.memory.usage",
+        callbacks=[lambda options: get_memory_stats()],
+        description="Memory usage by state",
+        unit="By"
+    )
+
+    logger.info("Host metrics instrumentation started")
     logger.info(f"Recommendation Service starting on port {os.getenv('PORT', '8086')}")
 
 

@@ -1,10 +1,14 @@
-# Stage 1: Build Go binary (static, no CGO)
+# Stage 1: Build Go binary (with CGO for SQLite)
 FROM golang:1.23-alpine AS go-builder
 WORKDIR /build
+# Install build dependencies for CGO and SQLite
+RUN apk add --no-cache gcc musl-dev
 COPY go/go.mod go/go.sum ./
-RUN go mod download
 COPY go/ ./
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+# Update go.sum with new dependencies and download
+RUN go mod tidy && go mod download
+# CGO_ENABLED=1 required for go-sqlite3
+RUN CGO_ENABLED=1 GOOS=linux go build \
     -ldflags="-w -s" \
     -o /go-services .
 
@@ -43,7 +47,7 @@ COPY javascript/ /app/javascript/
 COPY run-docker.sh /app/run-docker.sh
 RUN chmod +x /app/run-docker.sh
 
-ENV COUNT=5
+ENV RPS=5
 ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ENV OTEL_EXPORTER_OTLP_INSECURE=true
 
