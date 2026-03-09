@@ -43,9 +43,7 @@ services:
       retries: 3
 
   otel-mock:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: signoz/opentelemetry-demo-lite:latest
     container_name: otel-mock
     environment:
       - RPS=${RPS:-5}
