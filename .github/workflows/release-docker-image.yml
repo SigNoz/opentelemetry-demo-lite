@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  packages: write
 
 concurrency:
   group: release-docker-${{ github.ref }}
@@ -43,7 +42,7 @@ jobs:
         run: |
           REPO_LOWER="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           echo "repo=${REPO_LOWER}" >> "$GITHUB_OUTPUT"
-          echo "full=ghcr.io/${REPO_LOWER}" >> "$GITHUB_OUTPUT"
+          echo "full=docker.io/${REPO_LOWER}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU (arm/v7 only)
         if: matrix.emulated
@@ -52,12 +51,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Docker metadata
         id: meta
@@ -110,17 +108,16 @@ jobs:
         run: |
           REPO_LOWER="$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
           echo "repo=${REPO_LOWER}" >> "$GITHUB_OUTPUT"
-          echo "full=ghcr.io/${REPO_LOWER}" >> "$GITHUB_OUTPUT"
+          echo "full=docker.io/${REPO_LOWER}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GHCR
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Download digest artifacts
         uses: actions/download-artifact@v4
@@ -196,7 +193,7 @@ jobs:
             const lines = [
               marker,
               '## Container Images',
-              `- Registry package: [${process.env.IMAGE}](https://github.com/${context.repo.owner}/${context.repo.repo}/pkgs/container/${context.repo.repo})`,
+              `- Docker Hub: [${process.env.IMAGE}](https://hub.docker.com/r/${context.repo.owner.toLowerCase()}/${context.repo.repo.toLowerCase()})`,
               `- Immutable digest: \`${process.env.IMAGE}@${process.env.DIGEST}\``,
               '',
               '### Pull examples',
