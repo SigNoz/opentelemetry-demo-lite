@@ -40,7 +40,7 @@ services:
       retries: 3
 
   otel-mock:
-    image: signoz/opentelemetry-demo-lite:latest
+    image: signoz/opentelemetry-demo-lite:0.0.5
     container_name: otel-mock
     environment:
       - RPS=${RPS:-5}
