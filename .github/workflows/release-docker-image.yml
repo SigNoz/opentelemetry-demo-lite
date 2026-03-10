@@ -62,6 +62,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.image.outputs.full }}
+          flavor: |
+            latest=false
           tags: |
             type=ref,event=tag
             type=semver,pattern={{version}}
@@ -128,6 +130,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.image.outputs.full }}
+          flavor: |
+            latest=false
           tags: |
             type=ref,event=tag
             type=semver,pattern={{version}}
@@ -191,7 +195,7 @@ jobs:
               `- Immutable digest: \`${process.env.IMAGE}@${process.env.DIGEST}\``,
               '',
               '### Pull examples',
-              pullExamples || `- \`docker pull ${process.env.IMAGE}:latest\``,
+              pullExamples || `- \`docker pull ${process.env.IMAGE}:${process.env.DOCKER_METADATA_OUTPUT_VERSION}\``,
             ];
 
             const section = lines.join('\n');
