@@ -11,6 +11,7 @@ RUN go mod tidy && go mod download
 RUN CGO_ENABLED=1 GOOS=linux go build \
     -ldflags="-w -s" \
     -o /go-services .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /scenario ./cmd/scenario
 
 FROM node:20-alpine AS js-builder
 WORKDIR /build
@@ -32,6 +33,7 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 COPY --from=go-builder /go-services /app/bin/go-services
+COPY --from=go-builder /scenario /app/bin/scenario
 
 COPY python/requirements.txt /tmp/requirements.txt
 RUN apk add --no-cache --virtual .build-deps gcc musl-dev python3-dev linux-headers && \
@@ -45,6 +47,7 @@ COPY --from=js-builder /build/node_modules /app/javascript/node_modules
 COPY javascript/ /app/javascript/
 
 COPY run-docker.sh /app/run-docker.sh
+COPY run-eval.sh /app/run-eval.sh
 RUN chmod +x /app/run-docker.sh
 
 ENV RPS=5

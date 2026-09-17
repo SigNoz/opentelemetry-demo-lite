@@ -3,7 +3,8 @@
  */
 const http = require('http');
 const url = require('url');
-const { initTelemetry, shutdown, emitLog, trace, propagation, context, SpanKind } = require('./common/telemetry');
+const { isEvalMode } = require('./common/workload-mode');
+const { initTelemetry, registerShutdownHandler, emitLog, trace, propagation, context, SpanKind } = require('./common/telemetry');
 
 const PORT = process.env.PORT || 8080;
 const { tracer, meter, logger } = initTelemetry('frontend');
@@ -105,7 +106,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 function makeRequest(method, urlString, parentSpan) {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
         const parsedUrl = url.parse(urlString);
         const parentContext = trace.setSpan(context.active(), parentSpan);
 
@@ -129,6 +130,10 @@ function makeRequest(method, urlString, parentSpan) {
             res.on('end', () => {
                 clientSpan.setAttribute('http.status_code', res.statusCode);
                 clientSpan.end();
+                if (isEvalMode() && res.statusCode !== 200) {
+                    reject(new Error(`Backend returned HTTP ${res.statusCode}`));
+                    return;
+                }
                 resolve(data || '{}');
             });
         });
@@ -137,6 +142,7 @@ function makeRequest(method, urlString, parentSpan) {
             clientSpan.recordException(err);
             clientSpan.setStatus({ code: 2, message: err.message });
             clientSpan.end();
+            if (isEvalMode()) { reject(err); return; }
             resolve(JSON.stringify({ error: err.message }));
         });
 
@@ -144,6 +150,7 @@ function makeRequest(method, urlString, parentSpan) {
             req.destroy();
             clientSpan.setStatus({ code: 2, message: 'timeout' });
             clientSpan.end();
+            if (isEvalMode()) { reject(new Error('timeout')); return; }
             resolve('{"error":"timeout"}');
         });
 
@@ -152,4 +159,4 @@ function makeRequest(method, urlString, parentSpan) {
 }
 
 server.listen(PORT, () => console.log(`Frontend Service listening on port ${PORT}`));
-process.on('SIGINT', () => { shutdown(); process.exit(0); });
+registerShutdownHandler();

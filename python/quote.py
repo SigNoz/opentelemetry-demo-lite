@@ -3,8 +3,8 @@ Quote Service - Shipping quote calculation
 """
 import logging
 import os
-import random
 from typing import Optional
+from workload_mode import is_eval_mode, shipping_cost
 
 from fastapi import FastAPI, Request
 from pydantic import BaseModel
@@ -60,17 +60,12 @@ def calculate_shipping_quote(num_items: int) -> dict:
         
         span.set_attribute("app.quote.items.count", num_items)
         
-        base_cost = 5.99
-        per_item_cost = 1.50 + random.uniform(-0.25, 0.25)
-        total_cost = base_cost + (num_items * per_item_cost)
+        total_cost, handling_fee = shipping_cost(num_items)
         
-        if random.random() < 0.2:
-            handling_fee = random.uniform(1.0, 3.0)
-            total_cost += handling_fee
+        if handling_fee is not None:
             span.add_event("handling_fee_applied", {"fee": handling_fee})
             logger.info(f"Applied handling fee: ${handling_fee:.2f}")
         
-        total_cost = round(total_cost, 2)
         span.set_attribute("app.quote.cost.total", total_cost)
         
         quotes_counter.add(1, {"number_of_items": str(num_items)})
@@ -87,6 +82,9 @@ def get_load_averages():
 
 @app.on_event("startup")
 async def startup_event():
+    if is_eval_mode():
+        logger.info(f"Quote Service starting on port {os.getenv('PORT', '8094')}")
+        return
     SystemMetricsInstrumentor(config={
         "system.cpu.time": ["idle", "user", "system", "irq"],
         "system.cpu.utilization": ["idle", "user", "system", "irq"],

@@ -4,7 +4,8 @@
 const http = require('http');
 const url = require('url');
 const { randomUUID } = require('crypto');
-const { initTelemetry, shutdown, emitLog, trace, propagation, context, SpanKind } = require('./common/telemetry');
+const { isEvalMode, fallbackUserId, shouldFail } = require('./common/workload-mode');
+const { initTelemetry, registerShutdownHandler, emitLog, trace, propagation, context, SpanKind } = require('./common/telemetry');
 
 const PORT = process.env.PORT || 8088;
 const { tracer, meter, logger } = initTelemetry('email');
@@ -16,7 +17,10 @@ const server = http.createServer((req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const ctx = propagation.extract(context.active(), req.headers);
 
-    if (parsedUrl.pathname === '/send' && req.method === 'POST') {
+    if (isEvalMode() && parsedUrl.pathname === '/health' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{"status":"ok"}');
+    } else if (parsedUrl.pathname === '/send' && req.method === 'POST') {
         handleSendEmail(req, res, ctx, parsedUrl.query);
     } else {
         res.writeHead(404);
@@ -35,7 +39,7 @@ function handleSendEmail(req, res, parentCtx, query) {
     context.with(trace.setSpan(parentCtx, span), () => {
         try {
             const orderId = query.order_id || randomUUID();
-            const userId = query.user_id || `user-${Math.floor(Math.random() * 10000)}`;
+            const userId = query.user_id || fallbackUserId();
             const email = query.email || `${userId}@example.com`;
 
             span.setAttributes({
@@ -52,7 +56,7 @@ function handleSendEmail(req, res, parentCtx, query) {
                 if (sessionId) span.setAttribute('session.id', sessionId.value);
             }
 
-            if (Math.random() < 0.02) {
+            if (shouldFail(0.02)) {
                 const error = new Error('SMTP connection failed');
                 span.recordException(error);
                 span.setStatus({ code: 2, message: error.message });
@@ -83,4 +87,4 @@ function handleSendEmail(req, res, parentCtx, query) {
 }
 
 server.listen(PORT, () => console.log(`Email Service listening on port ${PORT}`));
-process.on('SIGINT', () => { shutdown(); process.exit(0); });
+registerShutdownHandler();

@@ -159,6 +159,12 @@ Requires Go 1.21+, Node.js 18+, Python 3.11+.
 
 Expects an OTel Collector on `localhost:4317`.
 
+## Finite workload fixtures
+
+The optional [fixture path](docs/finite-workloads.md) builds deterministic checkout and CPU
+comparison inputs. It is dry-run-first and separate from the normal demo. Deployment, ingestion
+and query-engine verification require a dedicated, explicitly approved destination.
+
 ## License
 
 Apache 2.0

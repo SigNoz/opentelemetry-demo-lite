@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"runtime"
@@ -43,17 +44,15 @@ func InitTelemetry(ctx context.Context, serviceName string) *TelemetryProviders 
 	mp := initMeterProvider(ctx, res)
 	lp := initLoggerProvider(ctx, res)
 
-	if err := otelruntime.Start(otelruntime.WithMinimumReadMemStatsInterval(time.Second * 5)); err != nil {
-		log.Printf("failed to start runtime metrics: %v", err)
+	if !EvalEnabled() {
+		if err := otelruntime.Start(otelruntime.WithMinimumReadMemStatsInterval(time.Second * 5)); err != nil {
+			log.Printf("failed to start runtime metrics: %v", err)
+		}
+		if err := host.Start(host.WithMeterProvider(mp)); err != nil {
+			log.Printf("failed to start host metrics: %v", err)
+		}
+		startHostMetrics(mp)
 	}
-
-	// Start standard host metrics for CPU (system.cpu.time)
-	if err := host.Start(host.WithMeterProvider(mp)); err != nil {
-		log.Printf("failed to start host metrics: %v", err)
-	}
-
-	// Start custom metrics for load averages and memory
-	startHostMetrics(mp)
 
 	// Set global propagator for context propagation
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
@@ -70,6 +69,19 @@ func InitTelemetry(ctx context.Context, serviceName string) *TelemetryProviders 
 }
 
 func initResource(serviceName string) *sdkresource.Resource {
+	if EvalEnabled() {
+		if serviceName == "checkout" {
+			serviceName = "checkout-api"
+		}
+		// Process detection exposes command arguments; private control data stays local.
+		return sdkresource.NewSchemaless(
+			semconv.ServiceName(serviceName), semconv.ServiceVersion(serviceVersion),
+			semconv.TelemetrySDKLanguageGo,
+			attribute.String("account", "northstar-retail"),
+			attribute.String("deployment.environment", "prod"),
+			attribute.String("cluster", "main"),
+		)
+	}
 	hostName := fmt.Sprintf("%s-host", serviceName)
 
 	res, err := sdkresource.New(
@@ -106,6 +118,10 @@ func initTracerProvider(ctx context.Context, res *sdkresource.Resource) *sdktrac
 }
 
 func initMeterProvider(ctx context.Context, res *sdkresource.Resource) *sdkmetric.MeterProvider {
+	if EvalEnabled() {
+		// Only the finite scenario command exports the declared metric grid.
+		return sdkmetric.NewMeterProvider(sdkmetric.WithResource(res))
+	}
 	exporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithInsecure())
 	if err != nil {
 		log.Fatalf("failed to create metric exporter: %v", err)
@@ -132,16 +148,18 @@ func initLoggerProvider(ctx context.Context, res *sdkresource.Resource) *sdklog.
 }
 
 // Shutdown gracefully shuts down all providers
-func (t *TelemetryProviders) Shutdown(ctx context.Context) {
+func (t *TelemetryProviders) Shutdown(ctx context.Context) error {
+	var failures []error
 	if t.TracerProvider != nil {
-		t.TracerProvider.Shutdown(ctx)
+		failures = append(failures, t.TracerProvider.Shutdown(ctx))
 	}
 	if t.MeterProvider != nil {
-		t.MeterProvider.Shutdown(ctx)
+		failures = append(failures, t.MeterProvider.Shutdown(ctx))
 	}
 	if t.LoggerProvider != nil {
-		t.LoggerProvider.Shutdown(ctx)
+		failures = append(failures, t.LoggerProvider.Shutdown(ctx))
 	}
+	return errors.Join(failures...)
 }
 
 func startHostMetrics(mp *sdkmetric.MeterProvider) {

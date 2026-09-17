@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"math/rand"
 	"net/http"
 	"os"
+	"otel-mock/common"
 	"time"
 
 	"github.com/redis/go-redis/extra/redisotel/v9"
@@ -120,6 +120,11 @@ func RunCartService(tp *sdktrace.TracerProvider, lp otellog.LoggerProvider) {
 	)
 
 	mux := http.NewServeMux()
+	common.AddWorkloadHealth(mux, func() bool {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		return redisClient != nil && redisClient.Ping(ctx).Err() == nil
+	})
 	mux.Handle("/cart/add", addHandler)
 	mux.Handle("/cart", getHandler)
 	mux.Handle("/cart/empty", emptyHandler)
@@ -138,13 +143,13 @@ func addItemHandler(w http.ResponseWriter, r *http.Request) {
 
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		userID = fmt.Sprintf("user-%d", rand.Intn(1000))
+		userID = fmt.Sprintf("user-%d", common.WorkloadIntn(1000))
 	}
 	productID := r.URL.Query().Get("product_id")
 	if productID == "" {
 		productID = GetProductID()
 	}
-	quantity := rand.Intn(3) + 1
+	quantity := common.WorkloadIntn(3) + 1
 
 	span.SetAttributes(
 		attribute.String("app.user.id", userID),
@@ -190,7 +195,7 @@ func getCartHandler(w http.ResponseWriter, r *http.Request) {
 
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		userID = fmt.Sprintf("user-%d", rand.Intn(1000))
+		userID = fmt.Sprintf("user-%d", common.WorkloadIntn(1000))
 	}
 
 	span.SetAttributes(attribute.String("app.user.id", userID))
@@ -236,7 +241,7 @@ func emptyCartHandler(w http.ResponseWriter, r *http.Request) {
 
 	userID := r.URL.Query().Get("user_id")
 	if userID == "" {
-		userID = fmt.Sprintf("user-%d", rand.Intn(1000))
+		userID = fmt.Sprintf("user-%d", common.WorkloadIntn(1000))
 	}
 
 	span.SetAttributes(attribute.String("app.user.id", userID))

@@ -3,8 +3,8 @@ Recommendation Service - Python FastAPI
 """
 import logging
 import os
-import random
 from typing import List, Optional
+from workload_mode import is_eval_mode, select_recommendations
 
 from fastapi import FastAPI, Request
 from opentelemetry import trace, metrics
@@ -65,8 +65,7 @@ def get_product_list(exclude_ids: List[str]) -> List[dict]:
         
         span.set_attribute("exclude.count", len(exclude_ids))
         available = [p for p in PRODUCTS if p["id"] not in exclude_ids]
-        sample_size = min(5, len(available))
-        recommendations = random.sample(available, sample_size)
+        recommendations = select_recommendations(available)
         
         span.set_attribute("app.products.count", len(recommendations))
         span.add_event("recommendations_generated", {"count": len(recommendations)})
@@ -83,6 +82,9 @@ def get_load_averages():
 
 @app.on_event("startup")
 async def startup_event():
+    if is_eval_mode():
+        logger.info(f"Recommendation Service starting on port {os.getenv('PORT', '8086')}")
+        return
     SystemMetricsInstrumentor(config={
         "system.cpu.time": ["idle", "user", "system", "irq"],
         "system.cpu.utilization": ["idle", "user", "system", "irq"],

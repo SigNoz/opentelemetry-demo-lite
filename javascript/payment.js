@@ -4,7 +4,8 @@
 const http = require('http');
 const url = require('url');
 const { randomUUID } = require('crypto');
-const { initTelemetry, shutdown, emitLog, trace, propagation, context, SpanKind, SpanStatusCode } = require('./common/telemetry');
+const { isEvalMode, paymentDetails, shouldFail } = require('./common/workload-mode');
+const { initTelemetry, registerShutdownHandler, emitLog, trace, propagation, context, SpanKind, SpanStatusCode } = require('./common/telemetry');
 
 const PORT = process.env.PORT || 8081;
 const { tracer, meter, logger } = initTelemetry('payment');
@@ -13,13 +14,15 @@ const transactionsCounter = meter.createCounter('app.payment.transactions', { un
 const paymentLatency = meter.createHistogram('app.payment.latency', { unit: 'ms' });
 
 const CARD_PREFIXES = { '4': 'visa', '5': 'mastercard', '3': 'amex', '6': 'discover' };
-const LOYALTY_LEVELS = ['bronze', 'silver', 'gold', 'platinum'];
 
 const server = http.createServer((req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const ctx = propagation.extract(context.active(), req.headers);
 
-    if (parsedUrl.pathname === '/charge' && req.method === 'POST') {
+    if (isEvalMode() && parsedUrl.pathname === '/health' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{"status":"ok"}');
+    } else if (parsedUrl.pathname === '/charge' && req.method === 'POST') {
         handleCharge(req, res, ctx);
     } else {
         res.writeHead(404);
@@ -45,12 +48,9 @@ function handleCharge(req, res, parentCtx) {
                 span.setAttribute('app.payment.charged', true);
             }
 
-            const cardNumber = `4${Math.floor(Math.random() * 1e15).toString().padStart(15, '0')}`;
+            const { cardNumber, loyaltyLevel, amount, currency } = paymentDetails();
             const cardType = CARD_PREFIXES[cardNumber.charAt(0)] || 'unknown';
             const lastFour = cardNumber.slice(-4);
-            const loyaltyLevel = LOYALTY_LEVELS[Math.floor(Math.random() * LOYALTY_LEVELS.length)];
-            const amount = (Math.random() * 500 + 10).toFixed(2);
-            const currency = ['USD', 'EUR', 'GBP', 'JPY'][Math.floor(Math.random() * 4)];
             const transactionId = randomUUID();
 
             span.setAttributes({
@@ -63,7 +63,7 @@ function handleCharge(req, res, parentCtx) {
                 'app.payment.transaction.id': transactionId,
             });
 
-            if (Math.random() < 0.05) {
+            if (shouldFail(0.05)) {
                 const error = new Error('Payment failed: insufficient funds');
                 span.recordException(error);
                 span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
@@ -92,4 +92,4 @@ function handleCharge(req, res, parentCtx) {
 }
 
 server.listen(PORT, () => console.log(`Payment Service listening on port ${PORT}`));
-process.on('SIGINT', () => { shutdown(); process.exit(0); });
+registerShutdownHandler();

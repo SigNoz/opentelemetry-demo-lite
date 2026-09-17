@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"otel-mock/common"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -61,6 +62,7 @@ func RunCurrencyService(tp trace.TracerProvider, lp otellog.LoggerProvider) {
 	)
 
 	mux := http.NewServeMux()
+	common.AddWorkloadHealth(mux, nil)
 	mux.Handle("/convert", convertHandler)
 	mux.Handle("/currencies", supportedHandler)
 

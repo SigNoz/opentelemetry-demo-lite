@@ -1,11 +1,15 @@
 package services
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
-	"math/rand"
+	"math"
 	"net/http"
+	"otel-mock/common"
 	"otel-mock/config"
 	"time"
 
@@ -64,6 +68,7 @@ func RunShippingService(tp trace.TracerProvider, lp otellog.LoggerProvider) {
 	)
 
 	mux := http.NewServeMux()
+	common.AddWorkloadHealth(mux, nil)
 	mux.Handle("/ship", handler)
 	mux.Handle("/get-quote", quoteHandler)
 
@@ -80,7 +85,7 @@ func shipHandler(w http.ResponseWriter, r *http.Request) {
 
 	shippingLogger.InfoContext(ctx, "Processing shipping request")
 
-	itemCount := rand.Intn(5) + 1
+	itemCount := common.WorkloadIntn(5) + 1
 	quote, err := createQuoteFromCount(ctx, itemCount)
 	if err != nil {
 		span.RecordError(err)
@@ -114,7 +119,7 @@ func getQuoteHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	span := trace.SpanFromContext(ctx)
 
-	itemCount := rand.Intn(10) + 1
+	itemCount := common.WorkloadIntn(10) + 1
 
 	quote, err := createQuoteFromCount(ctx, itemCount)
 	if err != nil {
@@ -151,22 +156,49 @@ func createQuoteFromCount(ctx context.Context, count int) (float64, error) {
 		Timeout:   30 * time.Second,
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", config.QuoteURL+"/quote", nil)
+	var requestBody io.Reader
+	if common.EvalEnabled() {
+		client.Transport = &workloadTransport{base: client.Transport}
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		requestBody = bytes.NewBufferString(fmt.Sprintf(`{"numberOfItems":%d}`, count))
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", config.QuoteURL+"/quote", requestBody)
 	if err != nil {
 		span.RecordError(err)
+		if common.EvalEnabled() {
+			return 0, err
+		}
 		// Fallback to local calculation
 		return calculateQuoteLocally(ctx, span, count, start)
+	}
+	if common.EvalEnabled() {
+		req.Header.Set("Content-Type", "application/json")
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
 		span.RecordError(err)
+		if common.EvalEnabled() {
+			return 0, err
+		}
 		shippingLogger.WarnContext(ctx, "QuoteService unavailable, using fallback", "error", err)
 		return calculateQuoteLocally(ctx, span, count, start)
 	}
 	defer resp.Body.Close()
-
-	quote := 5.99 + (float64(count) * 1.50) + float64(rand.Intn(300))/100.0
+	quote := 5.99 + (float64(count) * 1.50) + float64(common.WorkloadIntn(300))/100.0
+	if common.EvalEnabled() {
+		var result struct {
+			Cost     *float64 `json:"cost_usd"`
+			Items    int      `json:"items"`
+			Currency string   `json:"currency"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || result.Cost == nil ||
+			math.IsNaN(*result.Cost) || math.IsInf(*result.Cost, 0) || *result.Cost < 0 ||
+			result.Items != count || result.Currency != "USD" {
+			return 0, fmt.Errorf("quote service returned an invalid quote")
+		}
+		quote = *result.Cost
+	}
 
 	span.SetAttributes(
 		attribute.Int("quote.items.count", count),
@@ -189,7 +221,7 @@ func createQuoteFromCount(ctx context.Context, count int) (float64, error) {
 func calculateQuoteLocally(ctx context.Context, span trace.Span, count int, start time.Time) (float64, error) {
 	baseRate := 5.99
 	perItemRate := 1.50
-	quote := baseRate + (float64(count) * perItemRate) + float64(rand.Intn(300))/100.0
+	quote := baseRate + (float64(count) * perItemRate) + float64(common.WorkloadIntn(300))/100.0
 
 	span.SetAttributes(
 		attribute.Int("quote.items.count", count),

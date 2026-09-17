@@ -1,0 +1,50 @@
+# Standalone opt-in configuration. Never merge with docker-compose.yaml.
+name: ${EVAL_PROJECT_NAME:?Set a unique project name for this isolated run}
+services:
+  otel-collector:
+    build:
+      context: .
+      dockerfile: Dockerfile.eval-collector
+    environment:
+      EVAL_OTLP_ENDPOINT: ${EVAL_OTLP_ENDPOINT:?Set the dedicated eval ingestion destination}
+      EVAL_INGESTION_KEY: ${EVAL_INGESTION_KEY:?Set a separately issued eval ingestion key}
+    networks: [workload, export]
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --save, "", --appendonly, "no"]
+    tmpfs: [/data]
+    networks: [workload]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 1s
+      retries: 15
+  workload:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: [bash, /app/run-eval.sh]
+    environment:
+      EVAL_MODE: "1"
+      EVAL_EXECUTE: ${EVAL_EXECUTE:?Execution requires a separately authorized run}
+      EVAL_SCENARIO: ${EVAL_SCENARIO:?Choose one approved world}
+      EVAL_RUN_ID: ${EVAL_RUN_ID:?Set a private unique run identifier}
+      EVAL_REFERENCE_TIME: ${EVAL_REFERENCE_TIME:?Set an explicit whole-second UTC reference time}
+      RPS: "0"
+      REDIS_ADDR: redis:6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_EXPORTER_OTLP_ENDPOINT_HTTP: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+      OTEL_METRICS_EXPORTER: none
+    networks: [workload]
+    depends_on:
+      otel-collector:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+networks:
+  workload:
+    internal: true
+  export: {}

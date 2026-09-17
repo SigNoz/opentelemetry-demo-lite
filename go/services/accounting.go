@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"otel-mock/common"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -95,8 +96,8 @@ func processOrder(ctx context.Context) {
 	defer span.End()
 
 	orderID := "order-" + randomString(8)
-	amount := float64(rand.Intn(50000)+1000) / 100.0
-	currency := []string{"USD", "EUR", "GBP", "JPY"}[rand.Intn(4)]
+	amount := float64(common.WorkloadIntn(50000)+1000) / 100.0
+	currency := []string{"USD", "EUR", "GBP", "JPY"}[common.WorkloadIntn(4)]
 
 	accountingLogger.InfoContext(ctx, "ProcessOrder started", "order_id", orderID, "amount", amount, "currency", currency)
 

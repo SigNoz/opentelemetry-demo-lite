@@ -1,0 +1,32 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+exporters:
+  otlp:
+    endpoint: ${env:EVAL_OTLP_ENDPOINT}
+    headers:
+      signoz-ingestion-key: ${env:EVAL_INGESTION_KEY}
+    tls:
+      insecure: false
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp]

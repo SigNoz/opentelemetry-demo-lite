@@ -10,11 +10,13 @@ const { OTLPLogExporter } = require('@opentelemetry/exporter-logs-otlp-http');
 const { PeriodicExportingMetricReader, MeterProvider } = require('@opentelemetry/sdk-metrics');
 const { LoggerProvider, SimpleLogRecordProcessor } = require('@opentelemetry/sdk-logs');
 const os = require('os');
+const { isEvalMode } = require('./workload-mode');
 
 let sdk = null;
 let loggerProvider = null;
 
 function initTelemetry(defaultServiceName) {
+    const evalMode = isEvalMode();
     const serviceName = process.env.OTEL_SERVICE_NAME || defaultServiceName;
     const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT_HTTP ||
         process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.replace(':4317', ':4318') ||
@@ -26,10 +28,15 @@ function initTelemetry(defaultServiceName) {
         'telemetry.sdk.language': 'javascript',
         'host.name': `${serviceName}-host`,
         'os.type': os.platform(),
+        ...(evalMode ? {
+            'account': 'northstar-retail',
+            'deployment.environment': 'prod',
+            'cluster': 'main',
+        } : {}),
     });
 
     const traceExporter = new OTLPTraceExporter({ url: `${otlpEndpoint}/v1/traces` });
-    const metricReader = new PeriodicExportingMetricReader({
+    const metricReader = evalMode ? undefined : new PeriodicExportingMetricReader({
         exporter: new OTLPMetricExporter({ url: `${otlpEndpoint}/v1/metrics` }),
         exportIntervalMillis: 5000,
     });
@@ -44,6 +51,7 @@ function initTelemetry(defaultServiceName) {
         resource,
         traceExporter,
         metricReader,
+        ...(evalMode ? { autoDetectResources: false } : {}),
         instrumentations: [new HttpInstrumentation()],
     });
 
@@ -56,8 +64,10 @@ function initTelemetry(defaultServiceName) {
     sdk.start();
     console.log(`[OTel] ${serviceName} initialized → ${otlpEndpoint}`);
 
-    startHostMetrics(serviceName);
-    console.log(`[OTel] ${serviceName} host metrics started`);
+    if (!evalMode) {
+        startHostMetrics(serviceName);
+        console.log(`[OTel] ${serviceName} host metrics started`);
+    }
 
     return {
         sdk,
@@ -167,9 +177,30 @@ function shutdown() {
     return Promise.all(promises);
 }
 
+function registerShutdownHandler(shutdownTelemetry = shutdown) {
+    let stopping = false;
+    process.on('SIGINT', async () => {
+        if (isEvalMode()) {
+            if (stopping) return;
+            stopping = true;
+            try {
+                await shutdownTelemetry();
+            } catch (err) {
+                console.error('Telemetry shutdown failed', err);
+                process.exit(1);
+                return;
+            }
+        } else {
+            shutdownTelemetry();
+        }
+        process.exit(0);
+    });
+}
+
 module.exports = {
     initTelemetry,
     shutdown,
+    registerShutdownHandler,
     emitLog,
     trace,
     metrics,

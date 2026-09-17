@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"math/rand"
 	"net/http"
+	"otel-mock/common"
 	"strings"
 
 	"github.com/XSAM/otelsql"
@@ -134,6 +134,7 @@ func RunProductCatalogService(tp *sdktrace.TracerProvider, lp otellog.LoggerProv
 	)
 
 	mux := http.NewServeMux()
+	common.AddWorkloadHealth(mux, func() bool { return sqliteDB != nil && sqliteDB.Ping() == nil })
 	mux.Handle("/products", listHandler)
 	mux.Handle("/products/", getHandler) // /products/{id}
 	mux.Handle("/products/search", searchHandler)
@@ -265,10 +266,10 @@ func searchProductsHandler(w http.ResponseWriter, r *http.Request) {
 
 // GetRandomProduct returns a random product for other services to use
 func GetRandomProduct() Product {
-	return products[rand.Intn(len(products))]
+	return products[common.WorkloadIntn(len(products))]
 }
 
 // GetProductID returns a random product ID
 func GetProductID() string {
-	return products[rand.Intn(len(products))].ID
+	return products[common.WorkloadIntn(len(products))].ID
 }

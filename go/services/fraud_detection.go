@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"otel-mock/common"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -98,8 +99,11 @@ func detectFraud(ctx context.Context) bool {
 	defer span.End()
 
 	orderID := "order-" + randomString(8)
-	amount := float64(rand.Intn(50000)+1000) / 100.0
+	amount := float64(common.WorkloadIntn(50000)+1000) / 100.0
 	userID := "user-" + randomString(6)
+	if common.EvalEnabled() {
+		userID = "user-1042"
+	}
 
 	fraudLogger.InfoContext(ctx, "DetectFraud started", "order_id", orderID, "user_id", userID, "amount", amount)
 
@@ -110,7 +114,7 @@ func detectFraud(ctx context.Context) bool {
 	)
 
 	// 2% chance of fraud detection
-	isFraud := rand.Float32() < 0.02
+	isFraud := !common.EvalEnabled() && rand.Float32() < 0.02
 
 	span.SetAttributes(attribute.Bool("app.fraud.detected", isFraud))
 

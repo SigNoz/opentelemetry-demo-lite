@@ -3,7 +3,8 @@
  */
 const http = require('http');
 const url = require('url');
-const { initTelemetry, shutdown, emitLog, trace, propagation, context, SpanKind } = require('./common/telemetry');
+const { isEvalMode, fallbackAds } = require('./common/workload-mode');
+const { initTelemetry, registerShutdownHandler, emitLog, trace, propagation, context, SpanKind } = require('./common/telemetry');
 
 const PORT = process.env.PORT || 8087;
 const { tracer, meter, logger } = initTelemetry('ad');
@@ -22,7 +23,10 @@ const server = http.createServer((req, res) => {
     const parsedUrl = url.parse(req.url, true);
     const ctx = propagation.extract(context.active(), req.headers);
 
-    if (parsedUrl.pathname === '/ads' || parsedUrl.pathname === '/') {
+    if (isEvalMode() && parsedUrl.pathname === '/health' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{"status":"ok"}');
+    } else if (parsedUrl.pathname === '/ads' || parsedUrl.pathname === '/') {
         handleGetAds(req, res, ctx, parsedUrl.query);
     } else {
         res.writeHead(404);
@@ -55,8 +59,7 @@ function handleGetAds(req, res, parentCtx, query) {
                 responseType = 'TARGETED';
             } else {
                 const allAds = Object.values(ADS_BY_CATEGORY).flat();
-                const count = Math.floor(Math.random() * 3) + 1;
-                ads = allAds.sort(() => 0.5 - Math.random()).slice(0, count);
+                ads = fallbackAds(allAds);
                 requestType = 'NOT_TARGETED';
                 responseType = 'RANDOM';
             }
@@ -84,4 +87,4 @@ function handleGetAds(req, res, parentCtx, query) {
 }
 
 server.listen(PORT, () => console.log(`Ad Service listening on port ${PORT}`));
-process.on('SIGINT', () => { shutdown(); process.exit(0); });
+registerShutdownHandler();

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
 	"net/http"
+	"otel-mock/common"
 	"otel-mock/config"
 	"time"
 
@@ -64,7 +64,17 @@ func InitCheckoutServer(port string, tp trace.TracerProvider, lp otellog.LoggerP
 
 	handler := otelhttp.NewHandler(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			placeOrder(r.Context(), httpClient)
+			client := *httpClient
+			checked := &workloadTransport{base: httpClient.Transport}
+			if common.EvalEnabled() {
+				client.Transport = checked
+				client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+			}
+			completed := placeOrder(r.Context(), &client)
+			if common.EvalEnabled() && (!completed || checked.failure != nil) {
+				http.Error(w, "checkout dependency failed", http.StatusBadGateway)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			fmt.Fprintf(w, `{"status": "order_placed"}`)
@@ -89,7 +99,7 @@ func InitCheckoutServer(port string, tp trace.TracerProvider, lp otellog.LoggerP
 	return server
 }
 
-func placeOrder(ctx context.Context, client *http.Client) {
+func placeOrder(ctx context.Context, client *http.Client) bool {
 	start := time.Now()
 
 	// Get the span from context (created by otelhttp handler or create new one for batch mode)
@@ -102,7 +112,10 @@ func placeOrder(ctx context.Context, client *http.Client) {
 		defer span.End()
 	}
 
-	userID := fmt.Sprintf("user-%d", rand.Intn(10000))
+	userID := fmt.Sprintf("user-%d", common.WorkloadIntn(10000))
+	if common.EvalEnabled() {
+		userID = "user-1042"
+	}
 	currency := randomCurrency()
 	orderID := uuid.New().String()
 
@@ -114,7 +127,7 @@ func placeOrder(ctx context.Context, client *http.Client) {
 
 	// Check for synthetic request baggage
 	bag := baggage.FromContext(ctx)
-	if m := bag.Member("synthetic_request"); m.Value() == "true" {
+	if m := bag.Member("synthetic_request"); m.Value() == "true" && !common.EvalEnabled() {
 		span.SetAttributes(attribute.Bool("app.synthetic", true))
 	}
 	if m := bag.Member("session.id"); m.Value() != "" {
@@ -128,7 +141,7 @@ func placeOrder(ctx context.Context, client *http.Client) {
 	if err != nil {
 		span.RecordError(err)
 		checkoutLogger.ErrorContext(ctx, "Prepare failed", "error", err)
-		return
+		return false
 	}
 	span.AddEvent("prepared", trace.WithAttributes(
 		attribute.Int("app.order.items.count", prep.itemCount),
@@ -155,7 +168,7 @@ func placeOrder(ctx context.Context, client *http.Client) {
 	if err != nil {
 		span.RecordError(err)
 		checkoutLogger.ErrorContext(ctx, "Payment failed", "error", err)
-		return
+		return false
 	}
 	span.AddEvent("charged", trace.WithAttributes(
 		attribute.String("app.payment.transaction.id", txID),
@@ -166,7 +179,7 @@ func placeOrder(ctx context.Context, client *http.Client) {
 	if err != nil {
 		span.RecordError(err)
 		checkoutLogger.ErrorContext(ctx, "Shipping failed", "error", err)
-		return
+		return false
 	}
 	span.AddEvent("shipped", trace.WithAttributes(
 		attribute.String("app.shipping.tracking.id", trackingID),
@@ -176,11 +189,17 @@ func placeOrder(ctx context.Context, client *http.Client) {
 	err = sendOrderConfirmation(ctx, client, orderID, userID)
 	if err != nil {
 		checkoutLogger.WarnContext(ctx, "Email failed", "error", err)
+		if common.EvalEnabled() {
+			return false
+		}
 	}
 	span.AddEvent("email_sent")
 
 	// Step 5: Mock Kafka publish (orders topic)
 	publishToKafka(ctx, client, orderID)
+	if checked, ok := client.Transport.(*workloadTransport); ok && checked.failure != nil {
+		return false
+	}
 	span.AddEvent("published_to_kafka", trace.WithAttributes(
 		attribute.String("messaging.destination.name", "orders"),
 	))
@@ -210,6 +229,7 @@ func placeOrder(ctx context.Context, client *http.Client) {
 		"tracking_id", trackingID,
 		"duration_ms", duration,
 	)
+	return true
 }
 
 type orderPrep struct {
@@ -255,8 +275,8 @@ func prepareOrderItems(ctx context.Context, client *http.Client, userID, currenc
 		attribute.Int("app.cart.items.count", cartItems),
 	))
 
-	total := float64(rand.Intn(50000)+1000) / 100.0
-	shippingCost := float64(rand.Intn(1000)+100) / 100.0
+	total := float64(common.WorkloadIntn(50000)+1000) / 100.0
+	shippingCost := float64(common.WorkloadIntn(1000)+100) / 100.0
 
 	// Step 3: Empty cart after checkout (calls Redis via cart service)
 	if err := emptyCart(ctx, client, userID); err != nil {
@@ -348,7 +368,10 @@ func chargeCard(ctx context.Context, client *http.Client, amount float64, curren
 	var res struct {
 		TransactionID string `json:"transaction_id"`
 	}
-	json.Unmarshal(body, &res)
+	decodeErr := json.Unmarshal(body, &res)
+	if common.EvalEnabled() && (decodeErr != nil || res.TransactionID == "") {
+		return "", fmt.Errorf("payment service did not return a transaction ID")
+	}
 
 	checkoutLogger.InfoContext(ctx, "ChargeCard success", "transaction_id", res.TransactionID)
 	span.SetAttributes(attribute.String("payment.transaction.id", res.TransactionID))
@@ -384,7 +407,10 @@ func shipOrder(ctx context.Context, client *http.Client, itemCount int) (string,
 	var res struct {
 		TrackingID string `json:"tracking_id"`
 	}
-	json.Unmarshal(body, &res)
+	decodeErr := json.Unmarshal(body, &res)
+	if common.EvalEnabled() && (decodeErr != nil || res.TrackingID == "") {
+		return "", fmt.Errorf("shipping service did not return a tracking ID")
+	}
 
 	checkoutLogger.InfoContext(ctx, "ShipOrder success", "tracking_id", res.TrackingID)
 	span.SetAttributes(attribute.String("shipping.tracking.id", res.TrackingID))
@@ -435,7 +461,7 @@ func publishToKafka(ctx context.Context, client *http.Client, orderID string) {
 
 	checkoutLogger.InfoContext(ctx, "PublishToKafka", "order_id", orderID, "topic", "orders")
 
-	time.Sleep(time.Duration(rand.Intn(10)+5) * time.Millisecond)
+	time.Sleep(time.Duration(common.WorkloadIntn(10)+5) * time.Millisecond)
 
 	req, _ := http.NewRequestWithContext(ctx, "POST", config.AccountingURL+"/consume", nil)
 	if resp, err := client.Do(req); err == nil {
@@ -450,7 +476,7 @@ func publishToKafka(ctx context.Context, client *http.Client, orderID string) {
 
 func randomCurrency() string {
 	currencies := []string{"USD", "EUR", "GBP", "JPY", "CAD"}
-	return currencies[rand.Intn(len(currencies))]
+	return currencies[common.WorkloadIntn(len(currencies))]
 }
 
 func getProductDetails(ctx context.Context, client *http.Client, productIDs []string) {
@@ -529,7 +555,7 @@ func getAds(ctx context.Context, client *http.Client) {
 	defer span.End()
 
 	categories := []string{"clothing", "electronics", "home", "outdoor"}
-	category := categories[rand.Intn(len(categories))]
+	category := categories[common.WorkloadIntn(len(categories))]
 	checkoutLogger.InfoContext(ctx, "GetAds", "category", category)
 
 	span.SetAttributes(attribute.String("app.ads.category", category))
