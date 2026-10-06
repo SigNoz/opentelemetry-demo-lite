@@ -15,7 +15,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/metric"
@@ -52,13 +51,14 @@ var products = []Product{
 
 var sqliteDB *sql.DB
 
-func initSQLite(tp *sdktrace.TracerProvider) {
+func initSQLite(tp *sdktrace.TracerProvider, mp metric.MeterProvider) {
 	db, err := otelsql.Open("sqlite3", "file::memory:?cache=shared",
 		otelsql.WithAttributes(
 			attribute.String("db.system", "sqlite"),
 			attribute.String("db.name", "products"),
 		),
 		otelsql.WithTracerProvider(tp),
+		otelsql.WithMeterProvider(mp),
 	)
 	if err != nil {
 		log.Printf("Failed to open SQLite: %v", err)
@@ -68,6 +68,7 @@ func initSQLite(tp *sdktrace.TracerProvider) {
 	// Register DB stats metrics
 	if _, err := otelsql.RegisterDBStatsMetrics(db,
 		otelsql.WithAttributes(attribute.String("db.system", "sqlite")),
+		otelsql.WithMeterProvider(mp),
 	); err != nil {
 		log.Printf("Failed to register SQLite metrics: %v", err)
 	}
@@ -99,8 +100,8 @@ func initSQLite(tp *sdktrace.TracerProvider) {
 	log.Printf("SQLite initialized with %d products", len(products))
 }
 
-func initProductMetrics() {
-	productMeter = otel.Meter("product-catalog")
+func initProductMetrics(mp metric.MeterProvider) {
+	productMeter = mp.Meter("product-catalog")
 	var err error
 
 	productCounter, err = productMeter.Int64Counter("app.products.requests",
@@ -111,39 +112,42 @@ func initProductMetrics() {
 	}
 }
 
-func RunProductCatalogService(tp *sdktrace.TracerProvider, lp otellog.LoggerProvider) {
+func RunProductCatalogService(tp *sdktrace.TracerProvider, lp otellog.LoggerProvider, mp metric.MeterProvider) {
 	addr := os.Getenv("PRODUCT_CATALOG_ADDR")
 	if addr == "" {
 		addr = ":8085"
 	}
-	server := InitProductCatalogServer(addr, tp, lp)
+	server := InitProductCatalogServer(addr, tp, lp, mp)
 	productLogger.Info("Product Catalog Service starting", "address", addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		productLogger.Error("Product Catalog Service failed", "error", err)
 	}
 }
 
-func InitProductCatalogServer(addr string, tp *sdktrace.TracerProvider, lp otellog.LoggerProvider) *http.Server {
+func InitProductCatalogServer(addr string, tp *sdktrace.TracerProvider, lp otellog.LoggerProvider, mp metric.MeterProvider) *http.Server {
 	productLogger = otelslog.NewLogger("product-catalog", otelslog.WithLoggerProvider(lp))
-	initProductMetrics()
-	initSQLite(tp)
+	initProductMetrics(mp)
+	initSQLite(tp, mp)
 
 	listHandler := otelhttp.NewHandler(
 		http.HandlerFunc(listProductsHandler),
 		"ListProducts",
 		otelhttp.WithTracerProvider(tp),
+		otelhttp.WithMeterProvider(mp),
 	)
 
 	getHandler := otelhttp.NewHandler(
 		http.HandlerFunc(getProductHandler),
 		"GetProduct",
 		otelhttp.WithTracerProvider(tp),
+		otelhttp.WithMeterProvider(mp),
 	)
 
 	searchHandler := otelhttp.NewHandler(
 		http.HandlerFunc(searchProductsHandler),
 		"SearchProducts",
 		otelhttp.WithTracerProvider(tp),
+		otelhttp.WithMeterProvider(mp),
 	)
 
 	mux := http.NewServeMux()

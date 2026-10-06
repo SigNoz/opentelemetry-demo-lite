@@ -23,7 +23,7 @@ func main() {
 	case "product-catalog":
 		tel := common.InitTelemetry(ctx, "product-catalog")
 		defer tel.Shutdown(ctx)
-		services.RunProductCatalogService(tel.TracerProvider, tel.LoggerProvider)
+		services.RunProductCatalogService(tel.TracerProvider, tel.LoggerProvider, tel.MeterProvider)
 	default:
 		log.Fatalf("Unknown service: %s", *service)
 	}
@@ -46,7 +46,7 @@ func runAllServices(ctx context.Context) {
 		defer wg.Done()
 		tel := common.InitTelemetry(ctx, "product-catalog")
 		defer tel.Shutdown(ctx)
-		services.RunProductCatalogService(tel.TracerProvider, tel.LoggerProvider)
+		services.RunProductCatalogService(tel.TracerProvider, tel.LoggerProvider, tel.MeterProvider)
 	}()
 
 	wg.Add(1)

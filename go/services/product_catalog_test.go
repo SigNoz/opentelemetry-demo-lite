@@ -10,6 +10,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -29,19 +31,25 @@ func (e *catalogLogExporter) Export(_ context.Context, records []sdklog.Record) 
 func (*catalogLogExporter) Shutdown(context.Context) error   { return nil }
 func (*catalogLogExporter) ForceFlush(context.Context) error { return nil }
 
-func newTestCatalog(t *testing.T) (http.Handler, *tracetest.InMemoryExporter, *catalogLogExporter) {
+func newTestCatalog(t *testing.T, readers ...sdkmetric.Reader) (http.Handler, *tracetest.InMemoryExporter, *catalogLogExporter) {
 	t.Helper()
 	spans := tracetest.NewInMemoryExporter()
 	res := resource.NewWithAttributes("", attribute.String("service.name", "product-catalog"))
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSyncer(spans), sdktrace.WithResource(res))
 	logs := &catalogLogExporter{}
 	lp := sdklog.NewLoggerProvider(sdklog.WithProcessor(sdklog.NewSimpleProcessor(logs)), sdklog.WithResource(res))
-	server := InitProductCatalogServer(":0", tp, lp)
+	options := []sdkmetric.Option{sdkmetric.WithResource(res)}
+	for _, reader := range readers {
+		options = append(options, sdkmetric.WithReader(reader))
+	}
+	mp := sdkmetric.NewMeterProvider(options...)
+	server := InitProductCatalogServer(":0", tp, lp, mp)
 	db := sqliteDB
 	t.Cleanup(func() {
 		db.Close()
 		tp.Shutdown(context.Background())
 		lp.Shutdown(context.Background())
+		mp.Shutdown(context.Background())
 	})
 	return server.Handler, spans, logs
 }
@@ -115,4 +123,44 @@ func TestProductCatalogDatabaseFailure(t *testing.T) {
 		}
 	}
 	t.Fatal("database failure did not mark the server span Error")
+}
+
+func TestProductCatalogExportsRequestMetrics(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	handler, _, _ := newTestCatalog(t, reader)
+	for _, id := range []string{"OLJCESPC7Z", "OLJCESPC7Z", "DOES-NOT-EXIST"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/products/"+id, nil))
+	}
+	var data metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &data); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range data.ScopeMetrics {
+		for _, measurement := range scope.Metrics {
+			if measurement.Name != "app.products.requests" {
+				continue
+			}
+			sum, ok := measurement.Data.(metricdata.Sum[int64])
+			if !ok {
+				t.Fatalf("unexpected metric aggregation: %T", measurement.Data)
+			}
+			counts := map[string]int64{}
+			for _, point := range sum.DataPoints {
+				method, _ := point.Attributes.Value("method")
+				status, _ := point.Attributes.Value("status")
+				if method.AsString() == "GetProduct" {
+					counts[status.AsString()] += point.Value
+				}
+				if _, present := point.Attributes.Value("app.product.id"); present {
+					t.Fatal("SKU leaked into metric labels")
+				}
+			}
+			if counts["found"] != 2 || counts["not_found"] != 1 {
+				t.Fatalf("request metric counts = %v, want found=2 and not_found=1", counts)
+			}
+			return
+		}
+	}
+	t.Fatal("app.products.requests was not emitted")
 }

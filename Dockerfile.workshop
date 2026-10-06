@@ -4,7 +4,7 @@ RUN apk add --no-cache gcc musl-dev
 COPY go/go.mod go/go.sum ./
 RUN go mod download
 COPY go/ ./
-RUN CGO_ENABLED=1 go build -o /catalog .
+RUN --mount=type=cache,target=/root/.cache/go-build CGO_ENABLED=1 go build -o /catalog .
 
 FROM alpine:3.19 AS catalog
 RUN apk add --no-cache ca-certificates
