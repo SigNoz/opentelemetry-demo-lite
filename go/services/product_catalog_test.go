@@ -164,3 +164,23 @@ func TestProductCatalogExportsRequestMetrics(t *testing.T) {
 	}
 	t.Fatal("app.products.requests was not emitted")
 }
+
+func TestProductCatalogPreservesOpaqueSKU(t *testing.T) {
+	handler, _, _ := newTestCatalog(t)
+	for _, want := range products {
+		t.Run(want.ID, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/products/"+want.ID, nil))
+			if w.Code != http.StatusOK {
+				t.Fatalf("existing SKU %q returned %d, want 200; body=%s", want.ID, w.Code, w.Body.String())
+			}
+			var got Product
+			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.ID != want.ID || got.Name != want.Name || got.Price != want.Price {
+				t.Fatalf("catalog lookup changed SKU or product: got %+v, want %+v", got, want)
+			}
+		})
+	}
+}

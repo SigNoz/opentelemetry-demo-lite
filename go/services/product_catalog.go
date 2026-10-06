@@ -198,11 +198,9 @@ func getProductHandler(w http.ResponseWriter, r *http.Request) {
 		attribute.String("rpc.method", "GetProduct"),
 	)
 
-	// Normalize zero padding used by legacy numeric product IDs.
-	lookupID := strings.TrimLeft(id, "0")
 	var found Product
 	err := sqliteDB.QueryRowContext(ctx,
-		`SELECT id, name, description, price FROM products WHERE id = ?`, lookupID).
+		`SELECT id, name, description, price FROM products WHERE id = ?`, id).
 		Scan(&found.ID, &found.Name, &found.Description, &found.Price)
 
 	if err == sql.ErrNoRows {
