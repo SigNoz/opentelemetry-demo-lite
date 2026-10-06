@@ -20,9 +20,14 @@ export OTEL_METRICS_EXPORTER=none
 export OTEL_PYTHON_DISABLED_INSTRUMENTATIONS=system_metrics
 pids=()
 pid_kinds=()
+scenario_pid=""
 cleanup() {
     local status=$? pid index attempt active child_status forced=0
     trap - EXIT INT TERM
+    if [[ -n "$scenario_pid" ]] && kill -0 "$scenario_pid" 2>/dev/null; then
+        kill -TERM "$scenario_pid" 2>/dev/null || true
+        wait "$scenario_pid" 2>/dev/null || true
+    fi
     for index in "${!pids[@]}"; do kill -INT "${pids[$index]}" 2>/dev/null || true; done
     for attempt in {1..10}; do
         active=0
@@ -102,6 +107,10 @@ for attempt in {1..30}; do
 done
 if [[ "$ready" != 1 ]]; then echo 'Required service readiness timed out.' >&2; exit 1; fi
 
+# The manifest is private and reproducible offline from the same inputs, so keep it out of logs.
+# Bash defers traps until a foreground command returns; waiting lets docker stop interrupt the run.
 /app/bin/scenario --world "$EVAL_SCENARIO" --run-id "$EVAL_RUN_ID" \
     --reference-time "$EVAL_REFERENCE_TIME" --execute \
-    --endpoint http://otel-collector:4318/v1/metrics
+    --endpoint http://otel-collector:4318/v1/metrics >/dev/null &
+scenario_pid=$!
+wait "$scenario_pid"

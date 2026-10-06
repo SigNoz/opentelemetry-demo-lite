@@ -3,9 +3,11 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +41,8 @@ class EvalConfigurationTest(unittest.TestCase):
         self.assertEqual(set(workload["networks"]), {"workload"})
         self.assertNotIn("EVAL_INGESTION_KEY", workload["environment"])
         self.assertEqual(workload["environment"]["RPS"], "0")
+        # The script's cleanup needs over Docker's default 10s before SIGKILL.
+        self.assertGreaterEqual(int(workload["stop_grace_period"].rstrip("s")), 20)
         self.assertNotIn("SIGNOZ_INGESTION_KEY", result.stdout)
         self.assertNotIn("ingest.us.signoz.cloud", result.stdout)
         for name in ("EVAL_OTLP_ENDPOINT", "EVAL_INGESTION_KEY", "EVAL_EXECUTE",
@@ -154,6 +158,59 @@ exit "$ORIGINAL_STATUS"
         result = subprocess.run(["bash", "-c", "set -euo pipefail\n" + cleanup + "\nexit 9"],
                                 capture_output=True, text=True, timeout=2)
         self.assertEqual(result.returncode, 9, result.stderr)
+
+
+class EvalScenarioRunTest(unittest.TestCase):
+    """Runs the script's cleanup and scenario steps with a stub controller."""
+
+    def script(self, directory, stub_body):
+        source = (ROOT / "run-eval.sh").read_text()
+        cleanup = source[source.index("pids=()") : source.index("\ncd /app/javascript")]
+        run = source[source.index("# The manifest is private") :]
+        stub = Path(directory) / "scenario"
+        stub.write_text("#!/bin/bash\n" + stub_body)
+        stub.chmod(0o755)
+        run = run.replace("/app/bin/scenario", str(stub))
+        return "set -euo pipefail\n" + cleanup + "\ntrap cleanup EXIT\n" \
+            "trap 'exit 130' INT\ntrap 'exit 143' TERM\n" + run
+
+    def env(self, directory):
+        return {"PATH": os.environ["PATH"], "EVAL_SCENARIO": "clean-checkout-v1",
+                "EVAL_RUN_ID": "private-701", "EVAL_REFERENCE_TIME": "2026-09-16T12:00:00Z",
+                "READY": str(Path(directory) / "ready")}
+
+    def test_manifest_stays_out_of_logs_and_status_propagates(self):
+        for status in (0, 3):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                script = self.script(directory, f"echo private-manifest\nexit {status}\n")
+                result = subprocess.run(["bash", "-c", script], env=self.env(directory),
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, status, result.stderr)
+                self.assertNotIn("private-manifest", result.stdout + result.stderr)
+
+    def test_termination_interrupts_a_running_scenario(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = self.script(directory, 'touch "$READY"\nexec sleep 30\n')
+            process = subprocess.Popen(["bash", "-c", script], env=self.env(directory),
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       start_new_session=True)
+            try:
+                ready = Path(directory) / "ready"
+                deadline = time.monotonic() + 5
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(ready.exists())
+                started = time.monotonic()
+                process.send_signal(signal.SIGTERM)
+                process.wait(timeout=5)
+                self.assertEqual(process.returncode, 143)
+                self.assertLess(time.monotonic() - started, 3)
+            finally:
+                if process.poll() is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                process.stdout.close()
+                process.stderr.close()
 
 
 if __name__ == "__main__":

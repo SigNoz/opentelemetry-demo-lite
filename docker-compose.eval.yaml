@@ -24,6 +24,8 @@ services:
       context: .
       dockerfile: Dockerfile
     command: [bash, /app/run-eval.sh]
+    # run-eval.sh gives services a 10s interrupt grace before forcing them; outlast it.
+    stop_grace_period: 30s
     environment:
       EVAL_MODE: "1"
       EVAL_EXECUTE: ${EVAL_EXECUTE:?Execution requires a separately authorized run}

@@ -44,12 +44,22 @@ Only the collector joins the export network; application services stay on the in
 The collector exports with TLS and does not fall back to the ordinary demo destination or key.
 Supply credentials through the execution environment, not committed files or shell history.
 
+Run one world with the inputs above in the environment, then remove the project:
+
+```sh
+docker compose -f docker-compose.eval.yaml up --build --exit-code-from workload
+docker compose -f docker-compose.eval.yaml down
+```
+
 `run-eval.sh` checks both execution gates before starting services, waits for bounded readiness,
-runs the finite command and shuts down its own children. There is no browser traffic generator.
-Only exact `EVAL_MODE=1` enables deterministic business inputs, disables incidental host/periodic
-metrics and makes ignored dependency failures fail the workload. The CLI itself also requires
-`--execute`; without it, it performs no network I/O. Direct CLI execution requires local HTTP
-services and a local collector endpoint, not the external ingestion address.
+runs the finite command and shuts down its own children. It discards the controller's manifest so
+the expected answers never reach container logs; regenerate it with the offline command above and
+the same world, run ID and reference time. `docker stop` interrupts a running world, and the
+service's `stop_grace_period` leaves room for the script's ten-second shutdown grace. There is no
+browser traffic generator. Only exact `EVAL_MODE=1` enables deterministic business inputs, disables
+incidental host/periodic metrics and makes ignored dependency failures fail the workload. The CLI
+itself also requires `--execute`; without it, it performs no network I/O. Direct CLI execution
+requires local HTTP services and a local collector endpoint, not the external ingestion address.
 
 An HTTP export acknowledgement does not prove storage or query fidelity. The manifest therefore
 keeps `telemetryVerified: false`. Before a world is used for evaluation, independently verify all
@@ -70,9 +80,11 @@ The repository's release workflow publishes images, so it is not an offline vali
 
 ## Companion checkpoint and verification
 
-This implementation accompanies [the assistant's Phase 6 checkpoint](https://github.com/SigNoz/signoz-ai-assistant/pull/452).
-It supplies finite workload inputs, not case activation, human answer labels or a replacement
-for the assistant's evidence checks. The assistant repository may require separate access.
+This implementation was written for the assistant's Phase 6 eval work
+([signoz-ai-assistant#452](https://github.com/SigNoz/signoz-ai-assistant/pull/452)). That PR merged
+as Benchmark v1 without a Demo Lite consumer: its harness seeds its own background telemetry, so
+no assistant eval currently runs these worlds. They supply finite workload inputs, not case
+activation, human answer labels or a replacement for the assistant's evidence checks.
 
 The 2026-09-17 publishing check passed `go test ./...`, `go vet ./...`, `go test -race ./...`,
 36 Node tests, 17 Python tests, shell syntax and whitespace checks. Compose was rendered with
