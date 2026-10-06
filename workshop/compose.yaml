@@ -1,0 +1,40 @@
+# Standalone local workshop stack. Do not merge with upstream docker-compose.yaml.
+name: ${WORKSHOP_PROJECT:-signoz-mcp-workshop-vishal}
+services:
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    command: [--config=/etc/otelcol/workshop.yaml]
+    volumes:
+      - ${WORKSHOP_COLLECTOR_CONFIG:-./collector.offline.yaml}:/etc/otelcol/workshop.yaml:ro
+    environment:
+      WORKSHOP_OTLP_ENDPOINT: ${WORKSHOP_OTLP_ENDPOINT:-}
+    networks: [workshop]
+    mem_limit: 128m
+    cpus: 0.5
+  product-catalog:
+    build:
+      context: ..
+      dockerfile: Dockerfile.workshop
+      target: catalog
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4317
+      OTEL_EXPORTER_OTLP_INSECURE: "true"
+    depends_on: [collector]
+    networks: [workshop]
+    mem_limit: 256m
+    cpus: 0.5
+  frontend:
+    build:
+      context: ..
+      dockerfile: Dockerfile.workshop
+      target: frontend
+    environment:
+      PRODUCT_CATALOG_URL: http://product-catalog:8085
+      OTEL_EXPORTER_OTLP_ENDPOINT_HTTP: http://collector:4318
+    depends_on: [product-catalog]
+    ports: ["127.0.0.1:${WORKSHOP_FRONTEND_PORT:-18080}:8080"]
+    networks: [workshop]
+    mem_limit: 256m
+    cpus: 0.5
+networks:
+  workshop: {}

@@ -1,0 +1,9 @@
+.git
+.workshop-cache
+**/.workshop-cache
+**/node_modules
+workshop/evidence
+**/.env
+**/.env.*
+**/bin
+**/__pycache__

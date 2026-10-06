@@ -20,6 +20,10 @@ func main() {
 	switch *service {
 	case "all":
 		runAllServices(ctx)
+	case "product-catalog":
+		tel := common.InitTelemetry(ctx, "product-catalog")
+		defer tel.Shutdown(ctx)
+		services.RunProductCatalogService(tel.TracerProvider, tel.LoggerProvider)
 	default:
 		log.Fatalf("Unknown service: %s", *service)
 	}

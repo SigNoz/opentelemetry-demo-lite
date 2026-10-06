@@ -50,3 +50,7 @@ resource-stats.csv
 coverage/
 .coverage
 htmlcov/
+
+# Local workshop caches and evidence
+.workshop-cache/
+workshop/evidence/

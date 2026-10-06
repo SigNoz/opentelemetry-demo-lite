@@ -1,0 +1,20 @@
+FROM golang:1.24-alpine AS go-builder
+WORKDIR /build
+RUN apk add --no-cache gcc musl-dev
+COPY go/go.mod go/go.sum ./
+RUN go mod download
+COPY go/ ./
+RUN CGO_ENABLED=1 go build -o /catalog .
+
+FROM alpine:3.19 AS catalog
+RUN apk add --no-cache ca-certificates
+COPY --from=go-builder /catalog /app/catalog
+ENTRYPOINT ["/app/catalog", "--service", "product-catalog"]
+
+FROM node:20-alpine AS frontend
+WORKDIR /app
+COPY javascript/package.json javascript/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+COPY javascript/frontend.js ./
+COPY javascript/common/ ./common/
+CMD ["node", "frontend.js"]

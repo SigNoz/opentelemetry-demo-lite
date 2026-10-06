@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/XSAM/otelsql"
@@ -111,6 +112,18 @@ func initProductMetrics() {
 }
 
 func RunProductCatalogService(tp *sdktrace.TracerProvider, lp otellog.LoggerProvider) {
+	addr := os.Getenv("PRODUCT_CATALOG_ADDR")
+	if addr == "" {
+		addr = ":8085"
+	}
+	server := InitProductCatalogServer(addr, tp, lp)
+	productLogger.Info("Product Catalog Service starting", "address", addr)
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		productLogger.Error("Product Catalog Service failed", "error", err)
+	}
+}
+
+func InitProductCatalogServer(addr string, tp *sdktrace.TracerProvider, lp otellog.LoggerProvider) *http.Server {
 	productLogger = otelslog.NewLogger("product-catalog", otelslog.WithLoggerProvider(lp))
 	initProductMetrics()
 	initSQLite(tp)
@@ -137,12 +150,11 @@ func RunProductCatalogService(tp *sdktrace.TracerProvider, lp otellog.LoggerProv
 	mux.Handle("/products", listHandler)
 	mux.Handle("/products/", getHandler) // /products/{id}
 	mux.Handle("/products/search", searchHandler)
-
-	port := ":8085"
-	productLogger.Info("Product Catalog Service starting", "port", port)
-	if err := http.ListenAndServe(port, mux); err != nil {
-		productLogger.Error("Product Catalog Service failed", "error", err)
-	}
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"status":"ok"}`)
+	})
+	return &http.Server{Addr: addr, Handler: mux}
 }
 
 func listProductsHandler(w http.ResponseWriter, r *http.Request) {
@@ -189,6 +201,7 @@ func getProductHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err == sql.ErrNoRows {
 		span.SetAttributes(attribute.Bool("product.found", false))
+		productLogger.WarnContext(ctx, "Product not found", "product_id", id)
 		productCounter.Add(ctx, 1, metric.WithAttributes(
 			attribute.String("method", "GetProduct"),
 			attribute.String("status", "not_found"),
@@ -198,6 +211,7 @@ func getProductHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		span.RecordError(err)
+		productLogger.ErrorContext(ctx, "Product lookup failed", "product_id", id, "error", err)
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
